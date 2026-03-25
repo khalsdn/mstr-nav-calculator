@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { RefreshCw, Bitcoin, DollarSign, TrendingUp, Calculator, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -24,6 +25,7 @@ interface PersistedInputs {
   usdReserve: number;
   debt: number;
   preferredStock: number;
+  isAutoMstr: boolean;
 }
 
 function loadPersistedInputs(): Partial<PersistedInputs> {
@@ -127,6 +129,10 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   
   const [mstrPrice, setMstrPrice] = useState<number>(persisted.mstrPrice ?? 135.66);
+  const [isAutoMstr, setIsAutoMstr] = useState<boolean>(persisted.isAutoMstr ?? false);
+  const [isLoadingMstr, setIsLoadingMstr] = useState(false);
+  const [eurRate, setEurRate] = useState<number | null>(null);
+  
   const [btcHoldings, setBtcHoldings] = useState<number>(persisted.btcHoldings ?? DEFAULT_VALUES.btcHoldings);
   const [basicShares, setBasicShares] = useState<number>(persisted.basicShares ?? DEFAULT_VALUES.basicShares);
   const [usdReserve, setUsdReserve] = useState<number>(persisted.usdReserve ?? DEFAULT_VALUES.usdReserve);
@@ -152,17 +158,70 @@ export default function App() {
     }
   }, []);
 
-  // Fetch Bitcoin price on mount and every 60 seconds
+  const fetchMstrPrice = useCallback(async () => {
+    if (!isAutoMstr) return;
+    setIsLoadingMstr(true);
+    try {
+      // Using allorigins proxy to fetch from Yahoo Finance to bypass CORS
+      const targetUrl = encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/MSTR');
+      const response = await fetch(`https://api.allorigins.win/get?url=${targetUrl}`);
+      const data = await response.json();
+      const yahooData = JSON.parse(data.contents);
+      const regularPrice = yahooData?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      const postMarketPrice = yahooData?.chart?.result?.[0]?.meta?.postMarketPrice;
+      
+      // Use postMarketPrice if available (after hours), else regularMarketPrice
+      const priceToUse = postMarketPrice || regularPrice;
+      
+      if (priceToUse) {
+        setMstrPrice(priceToUse);
+        setLastUpdated(new Date());
+      }
+    } catch (error) {
+      console.error('Failed to fetch MSTR price:', error);
+    } finally {
+      setIsLoadingMstr(false);
+    }
+  }, [isAutoMstr]);
+
+  const fetchEurRate = useCallback(async () => {
+    try {
+      const response = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json');
+      const data = await response.json();
+      if (data?.usd?.eur) {
+        setEurRate(data.usd.eur);
+      }
+    } catch (error) {
+      console.error('Failed to fetch EUR rate:', error);
+    }
+  }, []);
+
+  // Fetch Bitcoin and EUR rate on mount and every 60 seconds
   useEffect(() => {
     fetchBitcoinPrice();
-    const interval = setInterval(fetchBitcoinPrice, 60000);
+    fetchEurRate();
+    const interval = setInterval(() => {
+      fetchBitcoinPrice();
+      fetchEurRate();
+    }, 60000);
     return () => clearInterval(interval);
-  }, [fetchBitcoinPrice]);
+  }, [fetchBitcoinPrice, fetchEurRate]);
+
+  // Fetch MSTR price separately because it depends on isAutoMstr
+  useEffect(() => {
+    if (isAutoMstr) {
+      fetchMstrPrice();
+      const interval = setInterval(() => {
+        fetchMstrPrice();
+      }, 60000);
+      return () => clearInterval(interval);
+    }
+  }, [isAutoMstr, fetchMstrPrice]);
 
   // Persist input values to localStorage whenever they change
   useEffect(() => {
-    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock });
-  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock]);
+    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr });
+  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr]);
 
   const navData: NavData = {
     btcPrice,
@@ -287,30 +346,62 @@ export default function App() {
             {/* MSTR Price Card */}
             <Card className="bg-slate-800/50 border-slate-700">
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2 text-blue-400">
-                  <TrendingUp className="w-5 h-5" />
-                  MSTR Stock Price
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="w-4 h-4 text-slate-500 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Enter the current MSTR stock price manually</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </CardTitle>
+                <div className="flex justify-between items-center">
+                  <CardTitle className="text-lg flex items-center gap-2 text-blue-400">
+                    <TrendingUp className="w-5 h-5" />
+                    MSTR Stock Price
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="w-4 h-4 text-slate-500 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{isAutoMstr ? 'Automatically fetched from Yahoo Finance (includes pre/post market)' : 'Enter the current MSTR stock price manually'}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="auto-mstr" className="text-xs text-slate-400">Auto</Label>
+                    <Switch 
+                      id="auto-mstr" 
+                      checked={isAutoMstr} 
+                      onCheckedChange={setIsAutoMstr} 
+                      className="data-[state=checked]:bg-blue-500"
+                    />
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={mstrPrice}
-                  onChange={(e) => setMstrPrice(Number(e.target.value))}
-                  className="text-lg bg-slate-900 border-slate-600 text-white"
-                  placeholder="MSTR Stock Price"
-                />
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={mstrPrice}
+                      onChange={(e) => setMstrPrice(Number(e.target.value))}
+                      disabled={isAutoMstr}
+                      className="text-lg bg-slate-900 border-slate-600 text-white disabled:opacity-50"
+                      placeholder="MSTR Stock Price"
+                    />
+                  </div>
+                  {isAutoMstr && (
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={fetchMstrPrice}
+                      disabled={isLoadingMstr}
+                      className="border-slate-600 hover:bg-slate-700"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isLoadingMstr ? 'animate-spin' : ''}`} />
+                    </Button>
+                  )}
+                </div>
+                {eurRate && mstrPrice && (
+                  <p className="text-xs text-slate-400 mt-2">
+                    ≈ €{(mstrPrice * eurRate).toFixed(2)} EUR
+                  </p>
+                )}
               </CardContent>
             </Card>
 
