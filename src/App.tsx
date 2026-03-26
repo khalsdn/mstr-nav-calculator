@@ -162,22 +162,25 @@ export default function App() {
     if (!isAutoMstr) return;
     setIsLoadingMstr(true);
     try {
-      // Using allorigins proxy to fetch from Yahoo Finance to bypass CORS
-      const targetUrl = encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/MSTR');
-      const response = await fetch(`https://api.allorigins.win/raw?url=${targetUrl}`);
-      const yahooData = await response.json();
-      const regularPrice = yahooData?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      const postMarketPrice = yahooData?.chart?.result?.[0]?.meta?.postMarketPrice;
+      // Direct fetch from Robinhood (requires a CORS browser extension to work!)
+      const robinhoodEndpoint = "https://bonfire.robinhood.com/instruments/8249abab-d19e-449d-bd80-1c18e24f491c/detail-page-live-updating-data/?display_span=day&hide_extended_hours=false";
       
-      // Use postMarketPrice if available (after hours), else regularMarketPrice
-      const priceToUse = postMarketPrice || regularPrice;
+      const response = await fetch(robinhoodEndpoint, {
+        headers: {
+          "accept": "application/json",
+          "x-hyper-ex": "enabled"
+        }
+      });
       
-      if (priceToUse) {
-        setMstrPrice(priceToUse);
+      const data = await response.json();
+      const priceString = data?.chart_section?.default_display?.price_chart_data?.dollar_value?.amount;
+      
+      if (priceString) {
+        setMstrPrice(Number(priceString));
         setLastUpdated(new Date());
       }
     } catch (error) {
-      console.error('Failed to fetch MSTR price:', error);
+      console.error('Failed to fetch MSTR price from Robinhood. Is your CORS extension on?', error);
     } finally {
       setIsLoadingMstr(false);
     }
@@ -355,7 +358,7 @@ export default function App() {
                           <Info className="w-4 h-4 text-slate-500 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{isAutoMstr ? 'Automatically fetched from Yahoo Finance (includes pre/post market)' : 'Enter the current MSTR stock price manually'}</p>
+                          <p>{isAutoMstr ? 'Automatically fetched from Robinhood (Requires CORS extension)' : 'Enter the current MSTR stock price manually'}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
