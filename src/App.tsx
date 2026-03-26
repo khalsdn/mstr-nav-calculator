@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +26,7 @@ interface PersistedInputs {
   debt: number;
   preferredStock: number;
   isAutoMstr: boolean;
+  alertThreshold?: number;
 }
 
 function loadPersistedInputs(): Partial<PersistedInputs> {
@@ -135,11 +136,29 @@ export default function App() {
   const [eurRate, setEurRate] = useState<number | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date());
+  const hasNotifiedRef = useRef(false);
 
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 5000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission().catch(e => console.warn('Could not request notification permission', e));
+    }
+  }, []);
+
+  const formatTimeSince = (lastUpdatedDate: Date | null) => {
+    if (!lastUpdatedDate) return 'Fetching...';
+    const diffMs = currentTime.getTime() - lastUpdatedDate.getTime();
+    if (diffMs < 0) return 'Just now';
+    const diffSecs = Math.floor(diffMs / 1000);
+    const mins = Math.floor(diffSecs / 60);
+    const secs = diffSecs % 60;
+    if (mins === 0) return `${secs}s ago`;
+    return `${mins}m ${secs}s ago`;
+  };
 
   const getUpdateColor = (lastUpdatedDate: Date | null) => {
     if (!lastUpdatedDate) return 'text-slate-500';
@@ -154,6 +173,7 @@ export default function App() {
   const [usdReserve, setUsdReserve] = useState<number>(persisted.usdReserve ?? DEFAULT_VALUES.usdReserve);
   const [debt, setDebt] = useState<number>(persisted.debt ?? DEFAULT_VALUES.debt);
   const [preferredStock, setPreferredStock] = useState<number>(persisted.preferredStock ?? DEFAULT_VALUES.preferredStock);
+  const [alertThreshold, setAlertThreshold] = useState<number>(persisted.alertThreshold ?? 1.18);
 
   const fetchBitcoinPrice = useCallback(async () => {
     setIsLoadingBtc(true);
@@ -237,8 +257,8 @@ export default function App() {
 
   // Persist input values to localStorage whenever they change
   useEffect(() => {
-    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr });
-  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr]);
+    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold });
+  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold]);
 
   const navData: NavData = {
     btcPrice,
@@ -252,12 +272,28 @@ export default function App() {
 
   const result = calculateNav(navData);
 
+  useEffect(() => {
+    if (result.mnav > 0 && result.mnav < alertThreshold) {
+      if (!hasNotifiedRef.current) {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('MSTR NAV Alert', {
+            body: `mNAV has dropped below ${alertThreshold}! (Current: ${result.mnav.toFixed(4)})`,
+          });
+        }
+        hasNotifiedRef.current = true;
+      }
+    } else if (result.mnav >= alertThreshold) {
+      hasNotifiedRef.current = false;
+    }
+  }, [result.mnav, alertThreshold]);
+
   const resetToDefaults = () => {
     setBtcHoldings(DEFAULT_VALUES.btcHoldings);
     setBasicShares(DEFAULT_VALUES.basicShares);
     setUsdReserve(DEFAULT_VALUES.usdReserve);
     setDebt(DEFAULT_VALUES.debt);
     setPreferredStock(DEFAULT_VALUES.preferredStock);
+    setAlertThreshold(1.18);
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* ignore */ }
   };
 
@@ -355,7 +391,7 @@ export default function App() {
                   </Button>
                 </div>
                 <p className={`text-xs mt-2 transition-colors duration-300 ${getUpdateColor(btcLastUpdated)}`}>
-                  Last updated: {btcLastUpdated ? btcLastUpdated.toLocaleTimeString() : 'Fetching...'}
+                  Updated: {formatTimeSince(btcLastUpdated)}
                 </p>
               </CardContent>
             </Card>
@@ -422,7 +458,7 @@ export default function App() {
                   )}
                   {isAutoMstr && (
                     <p className={`text-xs transition-colors duration-300 ${getUpdateColor(mstrLastUpdated)}`}>
-                      Last updated: {mstrLastUpdated ? mstrLastUpdated.toLocaleTimeString() : 'Fetching...'}
+                      Updated: {formatTimeSince(mstrLastUpdated)}
                     </p>
                   )}
                 </div>
@@ -525,6 +561,21 @@ export default function App() {
                   />
                   <p className="text-xs text-slate-500 mt-1">
                     Aggregate notional value of perpetual preferred stock in millions
+                  </p>
+                </div>
+
+                <div className="pt-4 mt-2 border-t border-slate-700">
+                  <Label className="text-slate-400 mb-1 block">mNAV Alert Threshold</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={alertThreshold}
+                    onChange={(e) => setAlertThreshold(Number(e.target.value))}
+                    className="bg-slate-900 border-slate-600 text-white"
+                    placeholder="e.g. 1.18"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    Receive a desktop notification if mNAV drops below this value
                   </p>
                 </div>
               </CardContent>
