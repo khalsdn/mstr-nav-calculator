@@ -164,9 +164,8 @@ export default function App() {
     try {
       // Using allorigins proxy to fetch from Yahoo Finance to bypass CORS
       const targetUrl = encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/MSTR');
-      const response = await fetch(`https://api.allorigins.win/get?url=${targetUrl}`);
-      const data = await response.json();
-      const yahooData = JSON.parse(data.contents);
+      const response = await fetch(`https://api.allorigins.win/raw?url=${targetUrl}`);
+      const yahooData = await response.json();
       const regularPrice = yahooData?.chart?.result?.[0]?.meta?.regularMarketPrice;
       const postMarketPrice = yahooData?.chart?.result?.[0]?.meta?.postMarketPrice;
       
