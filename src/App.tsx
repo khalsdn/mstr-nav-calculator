@@ -126,12 +126,28 @@ export default function App() {
 
   const [btcPrice, setBtcPrice] = useState<number>(68179);
   const [isLoadingBtc, setIsLoadingBtc] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [btcLastUpdated, setBtcLastUpdated] = useState<Date | null>(null);
   
   const [mstrPrice, setMstrPrice] = useState<number>(persisted.mstrPrice ?? 135.66);
   const [isAutoMstr, setIsAutoMstr] = useState<boolean>(persisted.isAutoMstr ?? false);
   const [isLoadingMstr, setIsLoadingMstr] = useState(false);
+  const [mstrLastUpdated, setMstrLastUpdated] = useState<Date | null>(null);
   const [eurRate, setEurRate] = useState<number | null>(null);
+
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getUpdateColor = (lastUpdatedDate: Date | null) => {
+    if (!lastUpdatedDate) return 'text-slate-500';
+    const diffMins = (currentTime.getTime() - lastUpdatedDate.getTime()) / 60000;
+    if (diffMins < 2) return 'text-green-500';
+    if (diffMins <= 5) return 'text-orange-500';
+    return 'text-red-500';
+  };
   
   const [btcHoldings, setBtcHoldings] = useState<number>(persisted.btcHoldings ?? DEFAULT_VALUES.btcHoldings);
   const [basicShares, setBasicShares] = useState<number>(persisted.basicShares ?? DEFAULT_VALUES.basicShares);
@@ -149,7 +165,7 @@ export default function App() {
       const data = await response.json();
       if (data.bitcoin && data.bitcoin.usd) {
         setBtcPrice(data.bitcoin.usd);
-        setLastUpdated(new Date());
+        setBtcLastUpdated(new Date());
       }
     } catch (error) {
       console.error('Failed to fetch Bitcoin price:', error);
@@ -176,7 +192,7 @@ export default function App() {
       
       if (priceString) {
         setMstrPrice(Number(priceString));
-        setLastUpdated(new Date());
+        setMstrLastUpdated(new Date());
       }
     } catch (error) {
       console.error('Failed to fetch MSTR price from Robinhood. Is your CORS extension on?', error);
@@ -338,8 +354,8 @@ export default function App() {
                     <RefreshCw className={`w-4 h-4 ${isLoadingBtc ? 'animate-spin' : ''}`} />
                   </Button>
                 </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  Last updated: {lastUpdated.toLocaleTimeString()}
+                <p className={`text-xs mt-2 transition-colors duration-300 ${getUpdateColor(btcLastUpdated)}`}>
+                  Last updated: {btcLastUpdated ? btcLastUpdated.toLocaleTimeString() : 'Fetching...'}
                 </p>
               </CardContent>
             </Card>
@@ -398,11 +414,18 @@ export default function App() {
                     </Button>
                   )}
                 </div>
-                {eurRate && mstrPrice && (
-                  <p className="text-xs text-slate-400 mt-2">
-                    ≈ €{(mstrPrice * eurRate).toFixed(2)} EUR
-                  </p>
-                )}
+                <div className="flex flex-col gap-1 mt-2">
+                  {eurRate && mstrPrice && (
+                    <p className="text-xs text-slate-400">
+                      ≈ €{(mstrPrice * eurRate).toFixed(2)} EUR
+                    </p>
+                  )}
+                  {isAutoMstr && (
+                    <p className={`text-xs transition-colors duration-300 ${getUpdateColor(mstrLastUpdated)}`}>
+                      Last updated: {mstrLastUpdated ? mstrLastUpdated.toLocaleTimeString() : 'Fetching...'}
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
 

@@ -4,7 +4,7 @@
 
 ::selection {
   background-color: #f97316; /* Tailwind orange-500 */
-  color: white;
+  color: #020617; /* Slate-950 for better contrast */
 }
 
 @layer base {
