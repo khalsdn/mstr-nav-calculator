@@ -272,13 +272,23 @@ export default function App() {
 
   const result = calculateNav(navData);
 
+  // Update browser tab title
+  useEffect(() => {
+    document.title = result.mnav > 0 ? `mNAV: ${result.mnav.toFixed(4)} | MSTR Calculator` : 'MSTR NAV Calculator';
+  }, [result.mnav]);
+
+  // Handle mNAV threshold notifications
   useEffect(() => {
     if (result.mnav > 0 && result.mnav < alertThreshold) {
       if (!hasNotifiedRef.current) {
         if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('MSTR NAV Alert', {
-            body: `mNAV has dropped below ${alertThreshold}! (Current: ${result.mnav.toFixed(4)})`,
-          });
+          new Notification('🚨 MSTR mNAV Alert 🚨', {
+            body: `mNAV has dropped below ${alertThreshold}! (Current: ${result.mnav.toFixed(4)})\nOpen the app to see details.`,
+            icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
+            image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png',
+            requireInteraction: true,
+            vibrate: [200, 100, 200]
+          } as NotificationOptions & { image?: string });
         }
         hasNotifiedRef.current = true;
       }
