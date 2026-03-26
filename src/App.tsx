@@ -167,8 +167,7 @@ export default function App() {
       
       const response = await fetch(robinhoodEndpoint, {
         headers: {
-          "accept": "application/json",
-          "x-hyper-ex": "enabled"
+          "Accept": "application/json"
         }
       });
       
