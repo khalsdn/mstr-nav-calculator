@@ -223,10 +223,10 @@ export default function App() {
 
   const fetchEurRate = useCallback(async () => {
     try {
-      const response = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json');
+      const response = await fetch('https://api.coingecko.com/api/v3/exchange_rates');
       const data = await response.json();
-      if (data?.usd?.eur) {
-        setEurRate(data.usd.eur);
+      if (data?.rates?.eur?.value && data?.rates?.usd?.value) {
+        setEurRate(data.rates.eur.value / data.rates.usd.value);
       }
     } catch (error) {
       console.error('Failed to fetch EUR rate:', error);
