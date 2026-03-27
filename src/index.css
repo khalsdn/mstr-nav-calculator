@@ -3,8 +3,14 @@
 @tailwind utilities;
 
 ::selection {
-  background-color: #3b82f6; /* Tailwind blue-500 */
-  color: #ffffff;
+  background-color: #f97316 !important; /* Tailwind orange-500 */
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+::-moz-selection {
+  background-color: #f97316 !important; /* Tailwind orange-500 */
+  color: #ffffff !important;
 }
 
 @layer base {
