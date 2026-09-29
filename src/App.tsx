@@ -7,15 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { RefreshCw, Bitcoin, DollarSign, TrendingUp, Calculator, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { COINBASE_WS_SUBSCRIBE, COINBASE_WS_URL, fetchBtcPrice, fetchEurRate as fetchUsdEurRate, fetchMstrQuote } from '@/lib/prices';
-
-// Default values from Strategy.com (as of March 2026)
-const DEFAULT_VALUES = {
-  btcHoldings: 761068,
-  basicShares: 345084000, // Basic shares, not diluted
-  usdReserve: 2250, // in millions
-  debt: 8254, // in millions (includes all indebtedness)
-  preferredStock: 10000, // in millions
-};
+import { FALLBACK_DEFAULTS, loadDefaults, type Defaults } from '@/lib/defaults';
 
 const STORAGE_KEY = 'mstr-nav-inputs';
 
@@ -29,6 +21,7 @@ interface PersistedInputs {
   isAutoMstr: boolean;
   alertThreshold?: number;
   robinhoodProxyUrl?: string;
+  defaultsAsOf?: string; // asOf of the defaults.json the saved company figures came from
 }
 
 function loadPersistedInputs(): Partial<PersistedInputs> {
@@ -125,7 +118,7 @@ function formatMillions(num: number): string {
 }
 
 export default function App() {
-  const persisted = loadPersistedInputs();
+  const [persisted] = useState(loadPersistedInputs);
 
   const [btcPrice, setBtcPrice] = useState<number>(68179);
   const [isLoadingBtc, setIsLoadingBtc] = useState(false);
@@ -180,12 +173,37 @@ export default function App() {
     return 'text-red-500';
   };
   
-  const [btcHoldings, setBtcHoldings] = useState<number>(persisted.btcHoldings ?? DEFAULT_VALUES.btcHoldings);
-  const [basicShares, setBasicShares] = useState<number>(persisted.basicShares ?? DEFAULT_VALUES.basicShares);
-  const [usdReserve, setUsdReserve] = useState<number>(persisted.usdReserve ?? DEFAULT_VALUES.usdReserve);
-  const [debt, setDebt] = useState<number>(persisted.debt ?? DEFAULT_VALUES.debt);
-  const [preferredStock, setPreferredStock] = useState<number>(persisted.preferredStock ?? DEFAULT_VALUES.preferredStock);
-  const [alertThreshold, setAlertThreshold] = useState<number>(persisted.alertThreshold ?? 1.18);
+  const [btcHoldings, setBtcHoldings] = useState<number>(persisted.btcHoldings ?? FALLBACK_DEFAULTS.btcHoldings);
+  const [basicShares, setBasicShares] = useState<number>(persisted.basicShares ?? FALLBACK_DEFAULTS.basicShares);
+  const [usdReserve, setUsdReserve] = useState<number>(persisted.usdReserve ?? FALLBACK_DEFAULTS.usdReserve);
+  const [debt, setDebt] = useState<number>(persisted.debt ?? FALLBACK_DEFAULTS.debt);
+  const [preferredStock, setPreferredStock] = useState<number>(persisted.preferredStock ?? FALLBACK_DEFAULTS.preferredStock);
+  const [alertThreshold, setAlertThreshold] = useState<number>(persisted.alertThreshold ?? FALLBACK_DEFAULTS.alertThreshold);
+  const [defaults, setDefaults] = useState<Defaults>(FALLBACK_DEFAULTS);
+  const [defaultsAsOf, setDefaultsAsOf] = useState<string | undefined>(persisted.defaultsAsOf);
+
+  const applyCompanyFigures = useCallback((d: Defaults) => {
+    setBtcHoldings(d.btcHoldings);
+    setBasicShares(d.basicShares);
+    setUsdReserve(d.usdReserve);
+    setDebt(d.debt);
+    setPreferredStock(d.preferredStock);
+    setDefaultsAsOf(d.asOf);
+  }, []);
+
+  // Load public/defaults.json. When its asOf differs from the one the saved values
+  // came from, the company figures are replaced; a saved alert threshold is kept.
+  useEffect(() => {
+    loadDefaults()
+      .then((loaded) => {
+        setDefaults(loaded);
+        if (loaded.asOf !== persisted.defaultsAsOf) {
+          applyCompanyFigures(loaded);
+          if (persisted.alertThreshold === undefined) setAlertThreshold(loaded.alertThreshold);
+        }
+      })
+      .catch((error) => console.warn('Could not load defaults.json, using built-in defaults:', error));
+  }, [persisted, applyCompanyFigures]);
 
   const fetchBitcoinPrice = useCallback(async () => {
     setIsLoadingBtc(true);
@@ -301,8 +319,8 @@ export default function App() {
 
   // Persist input values to localStorage whenever they change
   useEffect(() => {
-    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl });
-  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl]);
+    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl, defaultsAsOf });
+  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl, defaultsAsOf]);
 
   const navData: NavData = {
     btcPrice,
@@ -342,13 +360,8 @@ export default function App() {
   }, [result.mnav, alertThreshold]);
 
   const resetToDefaults = () => {
-    setBtcHoldings(DEFAULT_VALUES.btcHoldings);
-    setBasicShares(DEFAULT_VALUES.basicShares);
-    setUsdReserve(DEFAULT_VALUES.usdReserve);
-    setDebt(DEFAULT_VALUES.debt);
-    setPreferredStock(DEFAULT_VALUES.preferredStock);
-    setAlertThreshold(1.18);
-    try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* ignore */ }
+    applyCompanyFigures(defaults);
+    setAlertThreshold(defaults.alertThreshold);
   };
 
   return (
@@ -647,7 +660,7 @@ export default function App() {
                     value={alertThreshold}
                     onChange={(e) => setAlertThreshold(Number(e.target.value))}
                     className="bg-slate-900 border-slate-600 text-white"
-                    placeholder="e.g. 1.18"
+                    placeholder="e.g. 1.14"
                   />
                   <p className="text-xs text-slate-500 mt-1">
                     Receive a desktop notification if mNAV drops below this value
@@ -722,7 +735,10 @@ export default function App() {
         <div className="mt-8 text-center text-slate-500 text-sm">
           <p>mNAV = Enterprise Value / BTC Reserve (per Strategy's definition)</p>
           <p className="mt-1">Enterprise Value = Market Cap + Debt + Preferred - Cash</p>
-          <p className="mt-1">Data sourced from Strategy.com (formerly MicroStrategy)</p>
+          <p className="mt-1">
+            Data sourced from Strategy.com (formerly MicroStrategy)
+            {defaults.asOf && ` · defaults as of ${defaults.asOf}`}
+          </p>
         </div>
       </div>
     </div>

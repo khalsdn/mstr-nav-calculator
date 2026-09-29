@@ -1,3 +1,19 @@
+# MSTR NAV Calculator
+
+## Updating the default values
+
+Company figures (BTC holdings, shares, cash, debt, preferred) and the default alert
+threshold live in [`public/defaults.json`](public/defaults.json). Edit the numbers,
+**change `asOf`** (e.g. to today's date) and push to `main`. The site redeploys, and every
+browser picks up the new figures on its next load, even if it has older values saved.
+A visitor's own alert threshold is kept. `usdReserve`, `debt` and `preferredStock` are in $ millions.
+
+## Robinhood 24-hour price (optional)
+
+See [`proxy/README.md`](proxy/README.md).
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

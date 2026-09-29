@@ -1,0 +1,10 @@
+{
+  "_help": "Default company figures from Strategy.com. usdReserve, debt and preferredStock are in $ millions. Change asOf whenever you edit the numbers so browsers with saved values pick up the new ones.",
+  "asOf": "2026-09-29",
+  "btcHoldings": 847666,
+  "basicShares": 421978000,
+  "usdReserve": 6021,
+  "debt": 6714,
+  "preferredStock": 14134,
+  "alertThreshold": 1.14
+}
