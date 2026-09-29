@@ -10,6 +10,7 @@ export interface Defaults {
   debt: number; // $ millions (all indebtedness)
   preferredStock: number; // $ millions
   alertThreshold: number;
+  robinhoodProxyUrl: string; // Cloudflare Worker from proxy/, empty = no proxy
 }
 
 export const FALLBACK_DEFAULTS: Defaults = {
@@ -20,6 +21,7 @@ export const FALLBACK_DEFAULTS: Defaults = {
   debt: 6714,
   preferredStock: 14134,
   alertThreshold: 1.14,
+  robinhoodProxyUrl: '',
 };
 
 const NUMERIC_FIELDS = ['btcHoldings', 'basicShares', 'usdReserve', 'debt', 'preferredStock', 'alertThreshold'] as const;
@@ -29,7 +31,11 @@ export async function loadDefaults(): Promise<Defaults> {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const data = await response.json();
 
-  const defaults: Defaults = { ...FALLBACK_DEFAULTS, asOf: String(data?.asOf ?? '') };
+  const defaults: Defaults = {
+    ...FALLBACK_DEFAULTS,
+    asOf: String(data?.asOf ?? ''),
+    robinhoodProxyUrl: typeof data?.robinhoodProxyUrl === 'string' ? data.robinhoodProxyUrl.trim() : '',
+  };
   for (const field of NUMERIC_FIELDS) {
     const value = Number(data?.[field]);
     if (Number.isFinite(value) && value >= 0) {

@@ -18,14 +18,6 @@ interface PriceSource {
   parse: (data: Json) => PriceQuote | null;
 }
 
-// Coinbase Exchange public WebSocket: pushes every BTC-USD trade in real time
-export const COINBASE_WS_URL = 'wss://ws-feed.exchange.coinbase.com';
-export const COINBASE_WS_SUBSCRIBE = JSON.stringify({
-  type: 'subscribe',
-  product_ids: ['BTC-USD'],
-  channels: ['ticker'],
-});
-
 export const ROBINHOOD_MSTR_URL =
   'https://bonfire.robinhood.com/instruments/8249abab-d19e-449d-bd80-1c18e24f491c/detail-page-live-updating-data/?display_span=day&hide_extended_hours=false';
 

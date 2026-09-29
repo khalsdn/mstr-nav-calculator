@@ -5,8 +5,8 @@ This tiny Cloudflare Worker fetches Robinhood's MSTR price and passes it back wi
 CORS headers. With it, the calculator shows Robinhood's exact price, including the
 overnight 24 Hour Market, without a browser extension.
 
-Cloudflare's free plan allows 100,000 requests/day. The calculator makes ~5,760/day
-per open tab (one every 15s).
+Cloudflare's free plan allows 100,000 requests/day. The calculator makes ~2,880/day
+per open tab (one every 30s).
 
 ## Deploy (dashboard, no install)
 
@@ -14,7 +14,7 @@ per open tab (one every 15s).
 2. **Workers & Pages → Create → Create Worker** (the "Hello World" template is fine), name it e.g. `mstr-robinhood`, click **Deploy**
 3. **Edit code**, replace everything with the contents of `robinhood-worker.js`, click **Deploy**
 4. Copy the worker URL, e.g. `https://mstr-robinhood.<your-subdomain>.workers.dev`
-5. In the calculator, turn on **Auto** for the MSTR price and paste the URL into **Robinhood proxy URL**
+5. Put the URL in `robinhoodProxyUrl` in `public/defaults.json` and push to `main`
 
 ## Deploy (command line)
 

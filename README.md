@@ -10,7 +10,8 @@ A visitor's own alert threshold is kept. `usdReserve`, `debt` and `preferredStoc
 
 ## Robinhood 24-hour price (optional)
 
-See [`proxy/README.md`](proxy/README.md).
+The Cloudflare Worker URL is set in `robinhoodProxyUrl` in [`public/defaults.json`](public/defaults.json)
+(empty string = no proxy). Changing it doesn't need an `asOf` bump. Deploy steps: [`proxy/README.md`](proxy/README.md).
 
 ---
 

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { RefreshCw, Bitcoin, DollarSign, TrendingUp, Calculator, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { COINBASE_WS_SUBSCRIBE, COINBASE_WS_URL, fetchBtcPrice, fetchEurRate as fetchUsdEurRate, fetchMstrQuote } from '@/lib/prices';
+import { fetchBtcPrice, fetchEurRate as fetchUsdEurRate, fetchMstrQuote } from '@/lib/prices';
 import { FALLBACK_DEFAULTS, loadDefaults, type Defaults } from '@/lib/defaults';
 
 const STORAGE_KEY = 'mstr-nav-inputs';
@@ -20,7 +20,6 @@ interface PersistedInputs {
   preferredStock: number;
   isAutoMstr: boolean;
   alertThreshold?: number;
-  robinhoodProxyUrl?: string;
   defaultsAsOf?: string; // asOf of the defaults.json the saved company figures came from
 }
 
@@ -125,8 +124,6 @@ export default function App() {
   const [btcLastUpdated, setBtcLastUpdated] = useState<Date | null>(null);
   const [btcSource, setBtcSource] = useState<string | null>(null);
   const [btcError, setBtcError] = useState<string | null>(null);
-  const [isBtcLive, setIsBtcLive] = useState(false);
-  const lastBtcTickRef = useRef(0);
   
   const [mstrPrice, setMstrPrice] = useState<number>(persisted.mstrPrice ?? 135.66);
   const [isAutoMstr, setIsAutoMstr] = useState<boolean>(persisted.isAutoMstr ?? true);
@@ -134,10 +131,6 @@ export default function App() {
   const [mstrLastUpdated, setMstrLastUpdated] = useState<Date | null>(null);
   const [mstrSource, setMstrSource] = useState<string | null>(null);
   const [mstrError, setMstrError] = useState<string | null>(null);
-  const [robinhoodProxyUrl, setRobinhoodProxyUrl] = useState<string>(persisted.robinhoodProxyUrl ?? '');
-  // Read through a ref so typing the URL doesn't restart the polling interval
-  const robinhoodProxyUrlRef = useRef(robinhoodProxyUrl);
-  robinhoodProxyUrlRef.current = robinhoodProxyUrl;
   const [eurRate, setEurRate] = useState<number | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -181,6 +174,7 @@ export default function App() {
   const [alertThreshold, setAlertThreshold] = useState<number>(persisted.alertThreshold ?? FALLBACK_DEFAULTS.alertThreshold);
   const [defaults, setDefaults] = useState<Defaults>(FALLBACK_DEFAULTS);
   const [defaultsAsOf, setDefaultsAsOf] = useState<string | undefined>(persisted.defaultsAsOf);
+  const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
   const applyCompanyFigures = useCallback((d: Defaults) => {
     setBtcHoldings(d.btcHoldings);
@@ -202,7 +196,8 @@ export default function App() {
           if (persisted.alertThreshold === undefined) setAlertThreshold(loaded.alertThreshold);
         }
       })
-      .catch((error) => console.warn('Could not load defaults.json, using built-in defaults:', error));
+      .catch((error) => console.warn('Could not load defaults.json, using built-in defaults:', error))
+      .finally(() => setIsConfigLoaded(true));
   }, [persisted, applyCompanyFigures]);
 
   const fetchBitcoinPrice = useCallback(async () => {
@@ -225,7 +220,7 @@ export default function App() {
     if (!isAutoMstr) return;
     setIsLoadingMstr(true);
     try {
-      const { price, source } = await fetchMstrQuote(robinhoodProxyUrlRef.current);
+      const { price, source } = await fetchMstrQuote(defaults.robinhoodProxyUrl);
       setMstrPrice(price);
       setMstrSource(source);
       setMstrLastUpdated(new Date());
@@ -236,7 +231,7 @@ export default function App() {
     } finally {
       setIsLoadingMstr(false);
     }
-  }, [isAutoMstr]);
+  }, [isAutoMstr, defaults.robinhoodProxyUrl]);
 
   const fetchEurRate = useCallback(async () => {
     try {
@@ -246,56 +241,10 @@ export default function App() {
     }
   }, []);
 
-  // Live BTC price from the Coinbase WebSocket (every trade), applied at most once per second
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    let disposed = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let pendingPrice: number | null = null;
-
-    const connect = () => {
-      ws = new WebSocket(COINBASE_WS_URL);
-      ws.onopen = () => ws?.send(COINBASE_WS_SUBSCRIBE);
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          const price = Number(msg.price);
-          if (msg.type === 'ticker' && price > 0) pendingPrice = price;
-        } catch { /* ignore malformed messages */ }
-      };
-      ws.onclose = () => {
-        setIsBtcLive(false);
-        if (!disposed) reconnectTimer = setTimeout(connect, 5000);
-      };
-      ws.onerror = () => ws?.close();
-    };
-
-    const flush = setInterval(() => {
-      if (pendingPrice === null) return;
-      setBtcPrice(pendingPrice);
-      setBtcSource('Coinbase · live');
-      setBtcLastUpdated(new Date());
-      setBtcError(null);
-      setIsBtcLive(true);
-      lastBtcTickRef.current = Date.now();
-      pendingPrice = null;
-    }, 1000);
-
-    connect();
-    return () => {
-      disposed = true;
-      clearTimeout(reconnectTimer);
-      clearInterval(flush);
-      ws?.close();
-    };
-  }, []);
-
-  // REST fallback: poll BTC only when the WebSocket has gone quiet
+  // Fetch BTC on mount and every 30 seconds
   useEffect(() => {
     fetchBitcoinPrice();
-    const interval = setInterval(() => {
-      if (Date.now() - lastBtcTickRef.current > 10000) fetchBitcoinPrice();
-    }, 15000);
+    const interval = setInterval(fetchBitcoinPrice, 30000);
     return () => clearInterval(interval);
   }, [fetchBitcoinPrice]);
 
@@ -306,21 +255,19 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchEurRate]);
 
-  // Fetch MSTR price separately because it depends on isAutoMstr
+  // Fetch MSTR every 30 seconds once defaults.json (which holds the proxy URL) has loaded
   useEffect(() => {
-    if (isAutoMstr) {
+    if (isAutoMstr && isConfigLoaded) {
       fetchMstrPrice();
-      const interval = setInterval(() => {
-        fetchMstrPrice();
-      }, 15000);
+      const interval = setInterval(fetchMstrPrice, 30000);
       return () => clearInterval(interval);
     }
-  }, [isAutoMstr, fetchMstrPrice]);
+  }, [isAutoMstr, isConfigLoaded, fetchMstrPrice]);
 
   // Persist input values to localStorage whenever they change
   useEffect(() => {
-    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl, defaultsAsOf });
-  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl, defaultsAsOf]);
+    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, defaultsAsOf });
+  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, defaultsAsOf]);
 
   const navData: NavData = {
     btcPrice,
@@ -430,7 +377,7 @@ export default function App() {
                         <Info className="w-4 h-4 text-slate-500 cursor-help" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Live from the Coinbase WebSocket; falls back to Coinbase / Kraken / Binance REST if the stream drops</p>
+                        <p>Fetched every 30 seconds from Coinbase (Kraken / Binance as fallback)</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -458,7 +405,6 @@ export default function App() {
                   </Button>
                 </div>
                 <p className={`text-xs mt-2 transition-colors duration-300 ${getUpdateColor(btcLastUpdated)}`}>
-                  {isBtcLive && <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse mr-1.5" />}
                   Updated: {formatTimeSince(btcLastUpdated)}
                   {btcSource && <span className="text-slate-500"> · {btcSource}</span>}
                 </p>
@@ -479,7 +425,7 @@ export default function App() {
                           <Info className="w-4 h-4 text-slate-500 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{isAutoMstr ? 'Every 15 seconds from Robinhood (via your proxy or a CORS extension); otherwise CNBC from 4am-8pm ET and the Hyperliquid 24/7 MSTR perp overnight and on weekends' : 'Enter the current MSTR stock price manually'}</p>
+                          <p>{isAutoMstr ? 'Every 30 seconds from Robinhood (via the proxy or a CORS extension); otherwise CNBC from 4am-8pm ET and the Hyperliquid 24/7 MSTR perp overnight and on weekends' : 'Enter the current MSTR stock price manually'}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -533,22 +479,6 @@ export default function App() {
                     </p>
                   )}
                   {isAutoMstr && mstrError && <p className="text-xs text-red-400">{mstrError}</p>}
-                  {isAutoMstr && (
-                    <div className="mt-2">
-                      <Label htmlFor="robinhood-proxy" className="text-xs text-slate-400">
-                        Robinhood proxy URL (optional, see proxy/README.md)
-                      </Label>
-                      <Input
-                        id="robinhood-proxy"
-                        type="url"
-                        value={robinhoodProxyUrl}
-                        onChange={(e) => setRobinhoodProxyUrl(e.target.value)}
-                        onBlur={fetchMstrPrice}
-                        className="mt-1 h-8 text-xs bg-slate-900 border-slate-600 text-white"
-                        placeholder="https://mstr-robinhood.your-name.workers.dev"
-                      />
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
