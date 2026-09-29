@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { RefreshCw, Bitcoin, DollarSign, TrendingUp, Calculator, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { COINBASE_WS_SUBSCRIBE, COINBASE_WS_URL, fetchBtcPrice, fetchEurRate as fetchUsdEurRate, fetchMstrQuote } from '@/lib/prices';
 
 // Default values from Strategy.com (as of March 2026)
 const DEFAULT_VALUES = {
@@ -128,18 +129,24 @@ export default function App() {
   const [btcPrice, setBtcPrice] = useState<number>(68179);
   const [isLoadingBtc, setIsLoadingBtc] = useState(false);
   const [btcLastUpdated, setBtcLastUpdated] = useState<Date | null>(null);
+  const [btcSource, setBtcSource] = useState<string | null>(null);
+  const [btcError, setBtcError] = useState<string | null>(null);
+  const [isBtcLive, setIsBtcLive] = useState(false);
+  const lastBtcTickRef = useRef(0);
   
   const [mstrPrice, setMstrPrice] = useState<number>(persisted.mstrPrice ?? 135.66);
-  const [isAutoMstr, setIsAutoMstr] = useState<boolean>(persisted.isAutoMstr ?? false);
+  const [isAutoMstr, setIsAutoMstr] = useState<boolean>(persisted.isAutoMstr ?? true);
   const [isLoadingMstr, setIsLoadingMstr] = useState(false);
   const [mstrLastUpdated, setMstrLastUpdated] = useState<Date | null>(null);
+  const [mstrSource, setMstrSource] = useState<string | null>(null);
+  const [mstrError, setMstrError] = useState<string | null>(null);
   const [eurRate, setEurRate] = useState<number | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const hasNotifiedRef = useRef(false);
 
   useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 5000);
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -178,17 +185,14 @@ export default function App() {
   const fetchBitcoinPrice = useCallback(async () => {
     setIsLoadingBtc(true);
     try {
-      // Using CoinGecko API for Bitcoin price
-      const response = await fetch(
-        'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd'
-      );
-      const data = await response.json();
-      if (data.bitcoin && data.bitcoin.usd) {
-        setBtcPrice(data.bitcoin.usd);
-        setBtcLastUpdated(new Date());
-      }
+      const { price, source } = await fetchBtcPrice();
+      setBtcPrice(price);
+      setBtcSource(source);
+      setBtcLastUpdated(new Date());
+      setBtcError(null);
     } catch (error) {
       console.error('Failed to fetch Bitcoin price:', error);
+      setBtcError('Could not fetch BTC price');
     } finally {
       setIsLoadingBtc(false);
     }
@@ -198,24 +202,14 @@ export default function App() {
     if (!isAutoMstr) return;
     setIsLoadingMstr(true);
     try {
-      // Direct fetch from Robinhood (requires a CORS browser extension to work!)
-      const robinhoodEndpoint = "https://bonfire.robinhood.com/instruments/8249abab-d19e-449d-bd80-1c18e24f491c/detail-page-live-updating-data/?display_span=day&hide_extended_hours=false";
-      
-      const response = await fetch(robinhoodEndpoint, {
-        headers: {
-          "Accept": "application/json"
-        }
-      });
-      
-      const data = await response.json();
-      const priceString = data?.chart_section?.default_display?.price_chart_data?.dollar_value?.amount;
-      
-      if (priceString) {
-        setMstrPrice(Number(priceString));
-        setMstrLastUpdated(new Date());
-      }
+      const { price, source } = await fetchMstrQuote();
+      setMstrPrice(price);
+      setMstrSource(source);
+      setMstrLastUpdated(new Date());
+      setMstrError(null);
     } catch (error) {
-      console.error('Failed to fetch MSTR price from Robinhood. Is your CORS extension on?', error);
+      console.error('Failed to fetch MSTR price:', error);
+      setMstrError('Could not fetch MSTR price');
     } finally {
       setIsLoadingMstr(false);
     }
@@ -223,26 +217,71 @@ export default function App() {
 
   const fetchEurRate = useCallback(async () => {
     try {
-      const response = await fetch('https://api.coingecko.com/api/v3/exchange_rates');
-      const data = await response.json();
-      if (data?.rates?.eur?.value && data?.rates?.usd?.value) {
-        setEurRate(data.rates.eur.value / data.rates.usd.value);
-      }
+      setEurRate(await fetchUsdEurRate());
     } catch (error) {
       console.error('Failed to fetch EUR rate:', error);
     }
   }, []);
 
-  // Fetch Bitcoin and EUR rate on mount and every 60 seconds
+  // Live BTC price from the Coinbase WebSocket (every trade), applied at most once per second
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingPrice: number | null = null;
+
+    const connect = () => {
+      ws = new WebSocket(COINBASE_WS_URL);
+      ws.onopen = () => ws?.send(COINBASE_WS_SUBSCRIBE);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          const price = Number(msg.price);
+          if (msg.type === 'ticker' && price > 0) pendingPrice = price;
+        } catch { /* ignore malformed messages */ }
+      };
+      ws.onclose = () => {
+        setIsBtcLive(false);
+        if (!disposed) reconnectTimer = setTimeout(connect, 5000);
+      };
+      ws.onerror = () => ws?.close();
+    };
+
+    const flush = setInterval(() => {
+      if (pendingPrice === null) return;
+      setBtcPrice(pendingPrice);
+      setBtcSource('Coinbase · live');
+      setBtcLastUpdated(new Date());
+      setBtcError(null);
+      setIsBtcLive(true);
+      lastBtcTickRef.current = Date.now();
+      pendingPrice = null;
+    }, 1000);
+
+    connect();
+    return () => {
+      disposed = true;
+      clearTimeout(reconnectTimer);
+      clearInterval(flush);
+      ws?.close();
+    };
+  }, []);
+
+  // REST fallback: poll BTC only when the WebSocket has gone quiet
   useEffect(() => {
     fetchBitcoinPrice();
-    fetchEurRate();
     const interval = setInterval(() => {
-      fetchBitcoinPrice();
-      fetchEurRate();
-    }, 60000);
+      if (Date.now() - lastBtcTickRef.current > 10000) fetchBitcoinPrice();
+    }, 15000);
     return () => clearInterval(interval);
-  }, [fetchBitcoinPrice, fetchEurRate]);
+  }, [fetchBitcoinPrice]);
+
+  // EUR rate changes slowly; refresh every 5 minutes
+  useEffect(() => {
+    fetchEurRate();
+    const interval = setInterval(fetchEurRate, 300000);
+    return () => clearInterval(interval);
+  }, [fetchEurRate]);
 
   // Fetch MSTR price separately because it depends on isAutoMstr
   useEffect(() => {
@@ -250,7 +289,7 @@ export default function App() {
       fetchMstrPrice();
       const interval = setInterval(() => {
         fetchMstrPrice();
-      }, 60000);
+      }, 15000);
       return () => clearInterval(interval);
     }
   }, [isAutoMstr, fetchMstrPrice]);
@@ -373,7 +412,7 @@ export default function App() {
                         <Info className="w-4 h-4 text-slate-500 cursor-help" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Automatically fetched from CoinGecko API every 60 seconds</p>
+                        <p>Live from the Coinbase WebSocket; falls back to Coinbase / Kraken / Binance REST if the stream drops</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -401,8 +440,11 @@ export default function App() {
                   </Button>
                 </div>
                 <p className={`text-xs mt-2 transition-colors duration-300 ${getUpdateColor(btcLastUpdated)}`}>
+                  {isBtcLive && <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse mr-1.5" />}
                   Updated: {formatTimeSince(btcLastUpdated)}
+                  {btcSource && <span className="text-slate-500"> · {btcSource}</span>}
                 </p>
+                {btcError && <p className="text-xs text-red-400 mt-1">{btcError}</p>}
               </CardContent>
             </Card>
 
@@ -419,7 +461,7 @@ export default function App() {
                           <Info className="w-4 h-4 text-slate-500 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{isAutoMstr ? 'Automatically fetched from Robinhood (Requires CORS extension)' : 'Enter the current MSTR stock price manually'}</p>
+                          <p>{isAutoMstr ? 'Real-time quote from CNBC every 15 seconds, incl. pre-market and after-hours (no CORS extension needed)' : 'Enter the current MSTR stock price manually'}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -469,8 +511,10 @@ export default function App() {
                   {isAutoMstr && (
                     <p className={`text-xs transition-colors duration-300 ${getUpdateColor(mstrLastUpdated)}`}>
                       Updated: {formatTimeSince(mstrLastUpdated)}
+                      {mstrSource && <span className="text-slate-500"> · {mstrSource}</span>}
                     </p>
                   )}
+                  {isAutoMstr && mstrError && <p className="text-xs text-red-400">{mstrError}</p>}
                 </div>
               </CardContent>
             </Card>
