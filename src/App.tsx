@@ -28,6 +28,7 @@ interface PersistedInputs {
   preferredStock: number;
   isAutoMstr: boolean;
   alertThreshold?: number;
+  robinhoodProxyUrl?: string;
 }
 
 function loadPersistedInputs(): Partial<PersistedInputs> {
@@ -140,6 +141,10 @@ export default function App() {
   const [mstrLastUpdated, setMstrLastUpdated] = useState<Date | null>(null);
   const [mstrSource, setMstrSource] = useState<string | null>(null);
   const [mstrError, setMstrError] = useState<string | null>(null);
+  const [robinhoodProxyUrl, setRobinhoodProxyUrl] = useState<string>(persisted.robinhoodProxyUrl ?? '');
+  // Read through a ref so typing the URL doesn't restart the polling interval
+  const robinhoodProxyUrlRef = useRef(robinhoodProxyUrl);
+  robinhoodProxyUrlRef.current = robinhoodProxyUrl;
   const [eurRate, setEurRate] = useState<number | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -202,7 +207,7 @@ export default function App() {
     if (!isAutoMstr) return;
     setIsLoadingMstr(true);
     try {
-      const { price, source } = await fetchMstrQuote();
+      const { price, source } = await fetchMstrQuote(robinhoodProxyUrlRef.current);
       setMstrPrice(price);
       setMstrSource(source);
       setMstrLastUpdated(new Date());
@@ -296,8 +301,8 @@ export default function App() {
 
   // Persist input values to localStorage whenever they change
   useEffect(() => {
-    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold });
-  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold]);
+    saveInputs({ mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl });
+  }, [mstrPrice, btcHoldings, basicShares, usdReserve, debt, preferredStock, isAutoMstr, alertThreshold, robinhoodProxyUrl]);
 
   const navData: NavData = {
     btcPrice,
@@ -461,7 +466,7 @@ export default function App() {
                           <Info className="w-4 h-4 text-slate-500 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{isAutoMstr ? 'Real-time quote from CNBC every 15 seconds, incl. pre-market and after-hours (no CORS extension needed)' : 'Enter the current MSTR stock price manually'}</p>
+                          <p>{isAutoMstr ? 'Every 15 seconds from Robinhood (via your proxy or a CORS extension); otherwise CNBC from 4am-8pm ET and the Hyperliquid 24/7 MSTR perp overnight and on weekends' : 'Enter the current MSTR stock price manually'}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -515,6 +520,22 @@ export default function App() {
                     </p>
                   )}
                   {isAutoMstr && mstrError && <p className="text-xs text-red-400">{mstrError}</p>}
+                  {isAutoMstr && (
+                    <div className="mt-2">
+                      <Label htmlFor="robinhood-proxy" className="text-xs text-slate-400">
+                        Robinhood proxy URL (optional, see proxy/README.md)
+                      </Label>
+                      <Input
+                        id="robinhood-proxy"
+                        type="url"
+                        value={robinhoodProxyUrl}
+                        onChange={(e) => setRobinhoodProxyUrl(e.target.value)}
+                        onBlur={fetchMstrPrice}
+                        className="mt-1 h-8 text-xs bg-slate-900 border-slate-600 text-white"
+                        placeholder="https://mstr-robinhood.your-name.workers.dev"
+                      />
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -1,5 +1,6 @@
 // Price sources that can be called straight from the browser (they send
-// Access-Control-Allow-Origin), so no CORS extension or proxy is needed.
+// Access-Control-Allow-Origin), so no CORS extension is needed. Robinhood is
+// the exception: it needs either a CORS extension or the proxy in /proxy.
 
 export interface PriceQuote {
   price: number;
@@ -13,6 +14,7 @@ type Json = any;
 interface PriceSource {
   name: string;
   url: string;
+  body?: unknown; // sent as a JSON POST when present
   parse: (data: Json) => PriceQuote | null;
 }
 
@@ -23,6 +25,9 @@ export const COINBASE_WS_SUBSCRIBE = JSON.stringify({
   product_ids: ['BTC-USD'],
   channels: ['ticker'],
 });
+
+export const ROBINHOOD_MSTR_URL =
+  'https://bonfire.robinhood.com/instruments/8249abab-d19e-449d-bd80-1c18e24f491c/detail-page-live-updating-data/?display_span=day&hide_extended_hours=false';
 
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;
@@ -35,12 +40,20 @@ function quote(price: unknown, source: string): PriceQuote | null {
   return Number.isFinite(n) && n > 0 ? { price: n, source } : null;
 }
 
-async function getJson(url: string, timeoutMs = 8000): Promise<Json> {
+async function getJson(url: string, body?: unknown, timeoutMs = 8000): Promise<Json> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    // No custom headers, so the browser sends a simple request (no CORS preflight)
-    const response = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+    // GETs carry no custom headers, so the browser sends them without a CORS preflight
+    const response = await fetch(url, {
+      signal: controller.signal,
+      cache: 'no-store',
+      ...(body !== undefined && {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.json();
   } finally {
@@ -53,11 +66,13 @@ async function fetchFirst(sources: PriceSource[]): Promise<PriceQuote> {
   const errors: string[] = [];
   for (const source of sources) {
     try {
-      const result = source.parse(await getJson(source.url));
+      const result = source.parse(await getJson(source.url, source.body));
       if (result) return result;
       errors.push(`${source.name}: unexpected response`);
     } catch (error) {
       errors.push(`${source.name}: ${error instanceof Error ? error.message : String(error)}`);
+      // A TypeError means the browser blocked the request (CORS) or the network failed
+      if (source.url === ROBINHOOD_MSTR_URL && error instanceof TypeError) robinhoodDirectBlocked = true;
     }
   }
   throw new Error(errors.join('; '));
@@ -84,6 +99,15 @@ const BTC_SOURCES: PriceSource[] = [
   },
 ];
 
+// Robinhood's own detail-page price, including its 24 Hour Market. The session
+// label ("Pre-market", "After-hours", ...) comes from the same payload.
+function parseRobinhood(d: Json): PriceQuote | null {
+  const display = d?.chart_section?.default_display;
+  const session = display?.secondary_value?.description?.value;
+  const label = typeof session === 'string' && session ? `Robinhood · ${session.toLowerCase()}` : 'Robinhood';
+  return quote(display?.price_chart_data?.dollar_value?.amount, label);
+}
+
 // CNBC's quote service is real-time (NASDAQ last sale) and includes
 // pre-market / after-hours trades in ExtendedMktQuote.
 function parseCnbc(d: Json): PriceQuote | null {
@@ -96,35 +120,54 @@ function parseCnbc(d: Json): PriceQuote | null {
   return quote(q.last, 'CNBC');
 }
 
-// Robinhood does not send CORS headers; this only works with a CORS extension
-function parseRobinhood(d: Json): PriceQuote | null {
-  const regularTime = Date.parse(d?.venue_last_trade_time ?? '');
-  const extendedTime = Date.parse(d?.venue_last_non_reg_trade_time ?? '');
-  if (d?.last_non_reg_trade_price && extendedTime > (regularTime || 0)) {
-    return quote(d.last_non_reg_trade_price, 'Robinhood · extended hours');
-  }
-  return quote(d?.last_trade_price, 'Robinhood');
-}
+const CNBC_SOURCE: PriceSource = {
+  name: 'CNBC',
+  url: 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=MSTR&requestMethod=itv&noform=0&partnerId=2&fund=1&exthrs=1&output=json&events=1',
+  parse: parseCnbc,
+};
 
-const MSTR_SOURCES: PriceSource[] = [
-  {
-    name: 'CNBC',
-    url: 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=MSTR&requestMethod=itv&noform=0&partnerId=2&fund=1&exthrs=1&output=json&events=1',
-    parse: parseCnbc,
-  },
-  {
-    name: 'Robinhood',
-    url: 'https://api.robinhood.com/quotes/MSTR/',
-    parse: parseRobinhood,
-  },
-];
+// Hyperliquid's MSTR perpetual trades 24/7 and tracks the stock closely, so it
+// fills the overnight / weekend gap when Robinhood is not reachable.
+const HYPERLIQUID_SOURCE: PriceSource = {
+  name: 'Hyperliquid',
+  url: 'https://api.hyperliquid.xyz/info',
+  body: { type: 'allMids', dex: 'xyz' },
+  parse: (d) => quote(d?.['xyz:MSTR'], 'Hyperliquid · 24/7 perp'),
+};
+
+let robinhoodDirectBlocked = false;
+
+// Pre-market through after-hours: Mon-Fri, 04:00-20:00 New York time
+function isUsExtendedSession(now = new Date()): boolean {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short',
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23',
+    }).formatToParts(now).map((p) => [p.type, p.value])
+  );
+  if (parts.weekday === 'Sat' || parts.weekday === 'Sun') return false;
+  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
+  return minutes >= 4 * 60 && minutes < 20 * 60;
+}
 
 export function fetchBtcPrice(): Promise<PriceQuote> {
   return fetchFirst(BTC_SOURCES);
 }
 
-export function fetchMstrQuote(): Promise<PriceQuote> {
-  return fetchFirst(MSTR_SOURCES);
+export function fetchMstrQuote(robinhoodProxyUrl?: string): Promise<PriceQuote> {
+  const sources: PriceSource[] = [];
+  const proxyUrl = robinhoodProxyUrl?.trim();
+  if (proxyUrl) {
+    sources.push({ name: 'Robinhood proxy', url: proxyUrl, parse: parseRobinhood });
+  }
+  if (!robinhoodDirectBlocked) {
+    sources.push({ name: 'Robinhood', url: ROBINHOOD_MSTR_URL, parse: parseRobinhood });
+  }
+  sources.push(...(isUsExtendedSession() ? [CNBC_SOURCE, HYPERLIQUID_SOURCE] : [HYPERLIQUID_SOURCE, CNBC_SOURCE]));
+  return fetchFirst(sources);
 }
 
 // USD -> EUR rate
