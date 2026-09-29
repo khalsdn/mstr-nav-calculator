@@ -8,6 +8,7 @@ import { RefreshCw, Bitcoin, DollarSign, TrendingUp, Calculator, Info } from 'lu
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { fetchBtcPrice, fetchEurRate as fetchUsdEurRate, fetchMstrQuote } from '@/lib/prices';
 import { FALLBACK_DEFAULTS, loadDefaults, type Defaults } from '@/lib/defaults';
+import { registerNotificationWorker, showNotification } from '@/lib/notify';
 
 const STORAGE_KEY = 'mstr-nav-inputs';
 
@@ -142,6 +143,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    registerNotificationWorker();
     if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
       Notification.requestPermission().catch(e => console.warn('Could not request notification permission', e));
     }
@@ -286,25 +288,25 @@ export default function App() {
     document.title = result.mnav > 0 ? `mNAV: ${result.mnav.toFixed(4)} | MSTR Calculator` : 'MSTR NAV Calculator';
   }, [result.mnav]);
 
-  // Handle mNAV threshold notifications
+  // Handle mNAV threshold notifications, once real prices have loaded (not the placeholders)
+  const hasLivePrices = btcLastUpdated !== null && (!isAutoMstr || mstrLastUpdated !== null);
   useEffect(() => {
+    if (!hasLivePrices) return;
     if (result.mnav > 0 && result.mnav < alertThreshold) {
       if (!hasNotifiedRef.current) {
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('🚨 MSTR mNAV Alert 🚨', {
-            body: `mNAV has dropped below ${alertThreshold}! (Current: ${result.mnav.toFixed(4)})\nOpen the app to see details.`,
-            icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
-            image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png',
-            requireInteraction: true,
-            vibrate: [200, 100, 200]
-          } as NotificationOptions & { image?: string });
-        }
+        showNotification('🚨 MSTR mNAV Alert 🚨', {
+          body: `mNAV has dropped below ${alertThreshold}! (Current: ${result.mnav.toFixed(4)})\nOpen the app to see details.`,
+          icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
+          image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png',
+          requireInteraction: true,
+          vibrate: [200, 100, 200],
+        });
         hasNotifiedRef.current = true;
       }
     } else if (result.mnav >= alertThreshold) {
       hasNotifiedRef.current = false;
     }
-  }, [result.mnav, alertThreshold]);
+  }, [result.mnav, alertThreshold, hasLivePrices]);
 
   const resetToDefaults = () => {
     applyCompanyFigures(defaults);
