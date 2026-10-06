@@ -14,13 +14,13 @@ export interface Defaults {
 }
 
 export const FALLBACK_DEFAULTS: Defaults = {
-  asOf: '2026-09-29',
-  btcHoldings: 847666,
-  basicShares: 421978000,
-  usdReserve: 6021,
+  asOf: '2026-10-06',
+  btcHoldings: 848000,
+  basicShares: 422071000,
+  usdReserve: 5711,
   debt: 6714,
-  preferredStock: 14134,
-  alertThreshold: 1.14,
+  preferredStock: 13946,
+  alertThreshold: 1.135,
   robinhoodProxyUrl: '',
 };
 
