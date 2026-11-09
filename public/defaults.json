@@ -1,11 +1,11 @@
 {
   "_help": "Default company figures from Strategy.com. usdReserve, debt and preferredStock are in $ millions. Change asOf whenever you edit the numbers so browsers with saved values pick up the new ones. robinhoodProxyUrl is the Cloudflare Worker from proxy/ (empty string = no proxy).",
-  "asOf": "2026-10-27",
-  "btcHoldings": 849327,
-  "basicShares": 423533000,
-  "usdReserve": 4922,
+  "asOf": "2026-11-15",
+  "btcHoldings": 850364,
+  "basicShares": 425591000,
+  "usdReserve": 4914,
   "debt": 6714,
-  "preferredStock": 13136,
+  "preferredStock": 12946,
   "alertThreshold": 1.05,
   "robinhoodProxyUrl": "https://mstr-robinhood.mstrnav.workers.dev"
 }
