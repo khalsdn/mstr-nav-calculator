@@ -119,7 +119,9 @@ const CNBC_SOURCE: PriceSource = {
 };
 
 // Hyperliquid's MSTR perpetual trades 24/7 and tracks the stock closely, so it
-// fills the overnight / weekend gap when Robinhood is not reachable.
+// fills the overnight / weekend gap when Robinhood is not reachable. On
+// weekends it is the only source we trust (Robinhood keeps showing Friday's
+// close), so it is queried first.
 const HYPERLIQUID_SOURCE: PriceSource = {
   name: 'Hyperliquid',
   url: 'https://api.hyperliquid.xyz/info',
@@ -145,11 +147,23 @@ function isUsExtendedSession(now = new Date()): boolean {
   return minutes >= 4 * 60 && minutes < 20 * 60;
 }
 
+// Saturday or Sunday in the viewer's own time zone, i.e. the local weekend.
+function isLocalWeekend(now = new Date()): boolean {
+  const day = now.getDay();
+  return day === 0 || day === 6;
+}
+
 export function fetchBtcPrice(): Promise<PriceQuote> {
   return fetchFirst(BTC_SOURCES);
 }
 
 export function fetchMstrQuote(robinhoodProxyUrl?: string): Promise<PriceQuote> {
+  // On the local weekend the stock market is closed and Robinhood keeps
+  // returning Friday's close, so we go straight to the 24/7 Hyperliquid perp.
+  if (isLocalWeekend()) {
+    return fetchFirst([HYPERLIQUID_SOURCE, CNBC_SOURCE]);
+  }
+
   const sources: PriceSource[] = [];
   const proxyUrl = robinhoodProxyUrl?.trim();
   if (proxyUrl) {

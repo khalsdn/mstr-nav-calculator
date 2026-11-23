@@ -427,7 +427,7 @@ export default function App() {
                           <Info className="w-4 h-4 text-slate-500 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{isAutoMstr ? 'Every 30 seconds from Robinhood (via the proxy or a CORS extension); otherwise CNBC from 4am-8pm ET and the Hyperliquid 24/7 MSTR perp overnight and on weekends' : 'Enter the current MSTR stock price manually'}</p>
+                          <p>{isAutoMstr ? 'Every 30 seconds from Robinhood (via the proxy or a CORS extension); otherwise CNBC from 4am-8pm ET and the Hyperliquid 24/7 MSTR perp overnight. On Saturdays and Sundays (your local time) the Hyperliquid perp is always used, since Robinhood only shows Friday\u2019s close' : 'Enter the current MSTR stock price manually'}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
